@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitor
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 15s
+    
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets: ["alertmanager:9093"]
+    
+    rule_files:
+    - /etc/prometheus/rules.yml
+
+    scrape_configs:
+
+    - job_name: 'prometheus'
+      static_configs:
+      - targets: ['localhost:9090']
+
+    - job_name: 'node-exporter'
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.*):10250'
+        replacement: '${1}:9100'
+        target_label: __address__
+        action: replace
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)  
+
+    - job_name: 'kubernetes-kubelet'
+      kubernetes_sd_configs:
+      - role: node
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+
+    - job_name: 'kubernetes-cadvisor'
+      kubernetes_sd_configs:
+      - role: node
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: metrics/cadvisor
+      - action: labelmap
+        regex: __meta_kubernetes__node_label_(.+)
+
+    - job_name: 'kubenetes-apiserver'
+      kubernetes_sd_configs:
+      - role: endpoints
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      relabel_configs:
+      - action: keep
+        source_labels: [__meta_kubernetes_namespace,__meta_kubernetes_service_name]
+        regex: default;kubernetes
+
+    - job_name: 'kubernetes_endpoints'
+      kubernetes_sd_configs:
+      - role: endpoints
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+        action: replace
+        target_label: __scheme__
+        regex: (https?)
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__,__meta_kubernetes_service_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        action: replace
+        target_label: kubernetes_name
+
+  rules.yml: |-
+    groups:
+    - name: Node-Monitor
+      rules:
+      - alert: 节点内存监控
+        expr: (node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 3m
+        labels:
+          severity: Warning
+          type: node
+        annotations:
+          description: "{{ $labels.instance }}: 内存使用率超过85%已持续3分钟以上，请尽快处理！(current value is : {{ $value }})"
+
+      - alert: 节点CPU监控
+        expr: sum(irate(node_cpu_seconds_total{mode!="idle"}[5m]))  by (instance) > 0.7
+        for: 3m
+        labels:
+          severity: Warning
+          type: node
+        annotations:
+          description: "{{ $labels.instance }}: CPU使用率超过70%已持续3分钟以上，请尽快处理！(current value is : {{ $value }})"
+
+      - alert: 节点状态监控
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 3m
+        labels:
+          severity: Warning
+          type: node
+        annotations:
+          description: "{{ $labels.node}} 已超过3分钟不可达"
+
+      - alert: 节点内存及磁盘监控
+        expr: kube_node_status_condition{condition=~"OutOfDisk|MemoryPressure|DiskPressure",status="true"} == 1
+        for: 3m
+        labels:
+          severity: Warning
+          type: node
+        annotations:
+          description: "{{ $labels.node}} 内存或磁盘资源占用高"
+
+    - name: K8s-Cluster-Monitor
+      rules:
+      - alert: apiserver状态监控
+        expr: sum by (instance) (up{job="kubenetes-apiserver"}) == 0
+        for: 3m
+        labels:
+          severity: Warning
+          type: node
+        annotations:
+          description: "{{ $labels.instance }} kube-apiserver 挂了!"
+
+    - name: Pod-Status-Monitor
+      rules:
+      - alert: Pod状态监控
+        expr: (kube_pod_container_status_ready{namespace!="kube-public"}) == 0
+        for: 1m
+        labels:
+          severity: Warning
+          type: app
+        annotations:
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not in Running"
+
+      - alert: Pod重启监控
+        expr: changes(kube_pod_container_status_restarts_total[10m]) > 0
+        labels:
+          severity: Warning
+          type: app
+        annotations:
+          description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} 最近10分钟内出现重启"

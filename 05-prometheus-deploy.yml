@@ -1,0 +1,123 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitor
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "nodes"
+  - "services"
+  - "endpoints"
+  - "pods"
+  - "nodes/proxy"
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+- apiGroups:
+  - "extensions"
+  resources:
+  - "ingresses"
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+- apiGroups:
+  - ""
+  resources:
+  - "configmaps"
+  - "nodes/metrics"
+  verbs:
+  - "get"
+- nonResourceURLs:
+  - "/metrics"
+  verbs:
+  - "get"
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitor
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitor
+spec:
+  selector:
+    app: prometheus
+  type: NodePort
+  ports:
+  - name: pro-http
+    port: 9090
+    nodePort: 30002
+    targetPort: http
+    protocol: TCP
+---
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitor
+spec:
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: data
+        hostPath:
+          path: /data/prometheus/
+      securityContext:
+        runAsUser: 0
+      nodeSelector:
+        type: monitor
+      containers:
+      - name:  prometheus
+        image:  prom/prometheus:v2.23.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--config.file=/etc/prometheus/prometheus.yml"
+        - "--storage.tsdb.path=/protetheus"
+        - "--storage.tsdb.retention.time=24h"
+        - "--web.enable-admin-api"  #开启api接口，可通过命令管理监控数据
+        - "--web.enable-lifecycle"  #开启配置热更新 localhost:9090/-/reload 加载
+        ports:
+        - name: http
+          containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: "/etc/prometheus"
+        - name: data
+          mountPath: "/protetheus"

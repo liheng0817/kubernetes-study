@@ -1,0 +1,128 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: alert-config
+  namespace: monitor
+data:
+  alertmanager.yml: |-
+    global:
+      resolve_timeout: 10m
+      wechat_api_url: 'https://qyapi.weixin.qq.com/cgi-bin/'
+      wechat_api_secret: 'j_f0YeRXC--1NXlPcc4gKWOtAVFHnkDolpbFMkToZpA'
+      wechat_api_corp_id: 'wxaa7b9ec92d92b178'
+    templates:
+    - '/etc/config/*.tmpl'
+    route:
+      group_by: ['alertname']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'default'
+
+      routes:
+      - receiver: 'wechat1'
+        match:
+          type: app 
+        continue: true
+
+      - receiver: 'wechat2'
+        match:
+          type: node
+        continue: true
+
+      - receiver: 'webhook1'
+        match:
+          type: app
+        continue: true
+
+      - receiver: 'webhook2'
+        match:
+          type: node
+
+    inhibit_rules:
+    - source_match:
+        status: 'High'
+      target_match:
+        status: 'warning'
+      equal: ['alertname','operations','instance']
+
+    receivers:
+    - name: 'wechat1'
+      wechat_configs:
+      - send_resolved: true
+        corp_id: 'wxaa7b9ec92d92b178'
+        to_user: '@all'
+        to_party: '6'
+        message: '{{ template "wechat.app.message" . }}'
+        agent_id: '1000017'
+        api_secret: 'j_f0YeRXC--1NXlPcc4gKWOtAVFHnkDolpbFMkToZpA'
+
+    - name: 'wechat2'
+      wechat_configs:
+      - send_resolved: true
+        corp_id: 'wxaa7b9ec92d92b178'
+        to_user: '@all'
+        to_party: '6'
+        message: '{{ template "wechat.node.message" . }}'
+        agent_id: '1000017'
+        api_secret: 'j_f0YeRXC--1NXlPcc4gKWOtAVFHnkDolpbFMkToZpA'
+
+    - name: 'webhook1'
+      webhook_configs:
+      - url: http://alertmanager-webhook-dingtalk.monitor.svc.cluster.local:8060/dingtalk/webhook1/send
+        send_resolved: true  
+
+    - name: 'webhook2'
+      webhook_configs:
+      - url: http://alertmanager-webhook-dingtalk.monitor.svc.cluster.local:8060/dingtalk/webhook2/send
+        send_resolved: true  
+
+    - name: 'default'
+      webhook_configs:
+      - url: http://alertmanager-webhook-dingtalk.monitor.svc.cluster.local:8060/dingtalk/webhook1/send
+        send_resolved: true  
+
+  wechat1.tmpl: |
+    {{ define "wecaht.link.title" }}[监控报警]{{ end }}
+    {{ define "wechat.app.message" -}}
+    {{- if gt (len .Alerts.Firing) 0 -}}
+      {{ range $i, $alert := .Alerts.Firing }}
+        [告警项目]:{{ index $alert.Labels "alertname" }}
+        [告警空间]:{{ index $alert.Labels "namespace" }}
+        [告警实例]:{{ index $alert.Labels "pod" }}
+        [告警级别]:{{ index $alert.Labels "severity" }}
+        [告警详情]:{{ index $alert.Annotations "description" }}
+        [触发时间]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- if gt (len .Alerts.Resolved) 0 -}}
+      {{ range $i, $alert := .Alerts.Resolved }}
+        [项目]:{{ index $alert.Labels "alertname" }}
+        [空间]:{{ index $alert.Labels "namespace" }}
+        [实例]:{{ index $alert.Labels "pod" }}
+        [状态]:恢复正常
+        [开始]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+        [恢复]:{{ (.EndsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- end }}
+
+  wechat2.tmpl: |
+    {{ define "wecaht.link.title" }}[监控报警]{{ end }}
+    {{ define "wechat.node.message" -}}
+    {{- if gt (len .Alerts.Firing) 0 -}}
+      {{ range $i, $alert := .Alerts.Firing }}
+        [告警项目]:{{ index $alert.Labels "alertname" }}
+        [告警主机]:{{ index $alert.Labels "instance" }}
+        [告警级别]:{{ index $alert.Labels "severity" }}
+        [告警详情]:{{ index $alert.Annotations "description" }}
+        [触发时间]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- if gt (len .Alerts.Resolved) 0 -}}
+      {{ range $i, $alert := .Alerts.Resolved }}
+        [项目]:{{ index $alert.Labels "alertname" }}
+        [主机]:{{ index $alert.Labels "instance" }}
+        [级别]:{{ index $alert.Labels "severity" }}
+        [状态]:恢复正常
+        [开始]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+        [恢复]:{{ (.EndsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- end }}

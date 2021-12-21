@@ -1,0 +1,128 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-webhook-dingtalk
+  namespace: monitor
+spec:
+  selector:
+    name:  alertmanager-webhook-dingtalk
+  ports:
+    - name: http
+      port: 8060
+      targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-webhook-dingtalk
+  namespace: monitor
+data:
+  config.yaml: |-
+    templates:
+    - /etc/prometheus-webhook-dingtalk/templates/*.tmpl
+    targets:
+      webhook1:
+        url: https://oapi.dingtalk.com/robot/send?access_token=37010a70dd95051a9b3d017b5d79cd608fa1ccecda6c30eb823c1c515c5cd5c7
+        message:
+          title: '{{ template "ding.link.title" . }}'
+          text: '{{ template "dingapp.link.content" . }}'
+      webhook2:
+        url: https://oapi.dingtalk.com/robot/send?access_token=37010a70dd95051a9b3d017b5d79cd608fa1ccecda6c30eb823c1c515c5cd5c7
+        message:
+          title: '{{ template "ding.link.title" . }}'
+          text: '{{ template "dingnode.link.content" . }}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-webhook-dingtalk-tmpl
+  namespace: monitor
+data:
+  default1.tmpl: |
+    {{ define "ding.link.title" }}[监控报警]{{ end }}
+    {{ define "dingapp.link.content" -}}
+    {{- if gt (len .Alerts.Firing) 0 -}}
+      {{ range $i, $alert := .Alerts.Firing }}
+        [告警项目]:{{ index $alert.Labels "alertname" }}
+        [告警空间]:{{ index $alert.Labels "namespace" }}
+        [告警实例]:{{ index $alert.Labels "pod" }}
+        [告警级别]:{{ index $alert.Labels "severity" }}
+        [告警详情]:{{ index $alert.Annotations "description" }}
+        [触发时间]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- if gt (len .Alerts.Resolved) 0 -}}
+      {{ range $i, $alert := .Alerts.Resolved }}
+        [项目]:{{ index $alert.Labels "alertname" }}
+        [空间]:{{ index $alert.Labels "namespace" }}
+        [实例]:{{ index $alert.Labels "pod" }}
+        [状态]:恢复正常
+        [开始]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+        [恢复]:{{ (.EndsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- end }} 
+
+  default2.tmpl: |
+    {{ define "ding.link.title" }}[监控报警]{{ end }}
+    {{ define "dingnode.link.content" -}}
+    {{- if gt (len .Alerts.Firing) 0 -}}
+      {{ range $i, $alert := .Alerts.Firing }}
+        [告警项目]:{{ index $alert.Labels "alertname" }}
+        [告警主机]:{{ index $alert.Labels "instance" }}
+        [告警级别]:{{ index $alert.Labels "severity" }}
+        [告警详情]:{{ index $alert.Annotations "description" }}
+        [触发时间]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- if gt (len .Alerts.Resolved) 0 -}}
+      {{ range $i, $alert := .Alerts.Resolved }}
+        [项目]:{{ index $alert.Labels "alertname" }}
+        [主机]:{{ index $alert.Labels "instance" }}
+        [级别]:{{ index $alert.Labels "severity" }}
+        [状态]:恢复正常
+        [开始]:{{ (.StartsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+        [恢复]:{{ (.EndsAt.Add 28800e9).Format "2006-01-02 15:04:05" }}
+      {{ end }}{{- end }}
+    {{- end }} 
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name:  alertmanager-webhook-dingtalk
+  namespace: monitor
+  labels:
+    name:  alertmanager-webhook-dingtalk
+spec:
+  selector:
+    matchLabels:
+      name: alertmanager-webhook-dingtalk
+  template:
+    metadata:
+      labels:
+        name:  alertmanager-webhook-dingtalk
+    spec:
+      volumes:
+      - name: config
+        configMap:
+          name: alertmanager-webhook-dingtalk
+      - name: tmpl
+        configMap:
+          name: alertmanager-webhook-dingtalk-tmpl
+      containers:
+      - image:  timonwong/prometheus-webhook-dingtalk:v1.4.0
+        name:  alertmanager-webhook-dingtalk
+        args:
+          - --web.listen-address=0.0.0.0:8060
+          - --config.file=/config/config.yaml
+        volumeMounts:
+        - name: config
+          mountPath: '/config'
+        - name: tmpl
+          mountPath: /etc/prometheus-webhook-dingtalk/templates
+        resources:
+          limits:
+            cpu: "150m"
+            memory: "150Mi"     
+        ports:
+        - containerPort: 8060
+          name: http
